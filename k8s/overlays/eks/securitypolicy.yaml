@@ -1,0 +1,15 @@
+# Gateway 全体（/, /videos, /stream）に Basic 認証をかける
+# HTTPS（NLB で終端）が前提。HTTP のままだとパスワードが平文で流れる
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: basic-auth
+  namespace: video-stream
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: video-stream-gateway
+  basicAuth:
+    users:
+      name: basic-auth  # kustomization.yaml の secretGenerator で .htpasswd から作る

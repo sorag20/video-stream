@@ -1,0 +1,11 @@
+リリース <%= Time.now.strftime('%Y-%m-%d %H:%M') %>
+このプルリクエストをマージすると、GitHub Actions が EKS にデプロイします（`.github/workflows/deploy.yml`）。
+
+> [!IMPORTANT]
+> マージは「Create a merge commit」で行ってください。squash や rebase でマージすると develop と main の履歴がずれ、次のリリース PR に同じ変更がもう一度載ります。
+
+## リリースするプルリクエスト
+
+<% pull_requests.each do |pr| -%>
+<%= pr.to_checklist_item %>
+<% end -%>

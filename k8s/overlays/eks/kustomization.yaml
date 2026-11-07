@@ -1,0 +1,70 @@
+# EKS 用の差分（base はローカルの Docker Desktop 用のまま残す）
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - storageclass.yaml
+  - envoyproxy.yaml
+  - securitypolicy.yaml
+
+# ECR のイメージを使う。ACCOUNT_ID と newTag は deploy/eks/deploy.sh がデプロイ時に置き換える（このファイルには実際の値を書かない）
+images:
+  - name: video-stream/upload-service
+    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/video-stream/upload-service
+    newTag: "unset"
+  - name: video-stream/transcoder-service
+    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/video-stream/transcoder-service
+    newTag: "unset"
+  - name: video-stream/streaming-service
+    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/video-stream/streaming-service
+    newTag: "unset"
+  - name: video-stream/web
+    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-1.amazonaws.com/video-stream/web
+    newTag: "unset"
+
+secretGenerator:
+  # base の初期パスワードを置き換える。secret.env は deploy/eks/deploy.sh が Parameter Store から書き出す（Git には含めない）
+  - name: app-secret
+    namespace: video-stream
+    behavior: replace
+    envs:
+      - secret.env
+  # Basic 認証のユーザー。.htpasswd も deploy/eks/deploy.sh が Parameter Store から書き出す（Git には含めない）
+  - name: basic-auth
+    namespace: video-stream
+    files:
+      - .htpasswd
+
+generatorOptions:
+  disableNameSuffixHash: true  # SecurityPolicy から固定の名前で参照するため
+
+patches:
+  # Envoy の Service を NLB として作るための設定 (envoyproxy.yaml) を紐づける
+  - target:
+      kind: GatewayClass
+      name: envoy-gateway
+    patch: |-
+      - op: add
+        path: /spec/parametersRef
+        value:
+          group: gateway.envoyproxy.io
+          kind: EnvoyProxy
+          name: nlb-proxy
+          namespace: video-stream
+  # TLS は NLB で終端するため、Envoy は 443 番で復号済みの HTTP を受ける
+  - target:
+      kind: Gateway
+      name: video-stream-gateway
+    patch: |-
+      - op: replace
+        path: /spec/listeners/0/port
+        value: 443
+  # インターネット越しの最大2GBのアップロードに合わせて延長（upload-service の ReadTimeout と揃える）
+  - target:
+      kind: HTTPRoute
+      name: video-stream
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/timeouts/request
+        value: 1800s

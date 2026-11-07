@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcoder-service
+  namespace: video-stream
+  labels:
+    app: transcoder-service
+spec:
+  # Workerは1台でも複数台でもジョブをRedisから取り出すので水平スケール可能
+  replicas: 1
+  selector:
+    matchLabels:
+      app: transcoder-service
+  template:
+    metadata:
+      labels:
+        app: transcoder-service
+    spec:
+      containers:
+        - name: transcoder-service
+          image: video-stream/transcoder-service:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secret
+          # FFmpegはCPUを大量に消費するためリソースを多め
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          # トランスコード作業用の一時ボリューム
+          volumeMounts:
+            - name: tmp-transcode
+              mountPath: /tmp/transcode
+      volumes:
+        - name: tmp-transcode
+          emptyDir:
+            sizeLimit: 10Gi

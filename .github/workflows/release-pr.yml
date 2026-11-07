@@ -1,0 +1,43 @@
+# develop にプルリクエストがマージされたら、develop → main のリリース PR を作る（すでにあれば一覧を更新する）
+# リリース PR をマージすると、main への push で deploy.yml が実行され EKS にデプロイされる
+name: Create release PR
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [develop]
+
+permissions:
+  contents: read
+  pull-requests: write  # リリース PR の作成・更新とラベル付け
+
+# 続けてマージしたときに、同じリリース PR を同時に更新しないようにする
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+
+jobs:
+  create-release-pr:
+    if: github.event.pull_request.merged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: develop
+          fetch-depth: 0  # main と develop の差分からリリースする PR を集めるため、全ブランチの履歴を取得する
+
+      - name: Create or update the release PR
+        # 書き込み権限のあるトークンを渡すため、ブランチ (master) ではなくコミットで固定する（2025-11-04 時点の master）
+        uses: bakunyo/git-pr-release-action@ff3f59a20f467c0e9974fd815db563d4f26a52c9
+        with:
+          # --squashed: squash マージした PR も一覧に含める
+          # --no-fetch: 上の checkout で取得した履歴を使う
+          args: --squashed --no-fetch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_PR_RELEASE_BRANCH_PRODUCTION: main
+          GIT_PR_RELEASE_BRANCH_STAGING: develop
+          GIT_PR_RELEASE_LABELS: release
+          GIT_PR_RELEASE_TEMPLATE: .github/git-pr-release-template.erb
+          TZ: Asia/Tokyo

@@ -1,0 +1,25 @@
+# Git
+.git
+.gitignore
+
+# ドキュメント
+*.md
+docs/
+
+# Kubernetesマニフェスト
+k8s/
+deploy/
+
+# ローカル設定
+.env
+.env.*
+docker-compose*.yml
+
+# ビルド成果物
+dist/
+bin/
+
+# IDE
+.vscode/
+.idea/
+*.swp

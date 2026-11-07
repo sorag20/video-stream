@@ -1,0 +1,57 @@
+# Gateway API による外部公開（実装: Envoy Gateway）
+# 実装に依存するのは GatewayClass の controllerName のみ。Gateway / HTTPRoute は実装を問わず共通
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy-gateway
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: video-stream-gateway
+  namespace: video-stream
+spec:
+  gatewayClassName: envoy-gateway
+  listeners:
+    # hostname を指定しないことで http://localhost で受け付ける（/etc/hosts の編集が不要）
+    - name: http
+      protocol: HTTP
+      port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: video-stream
+  namespace: video-stream
+spec:
+  parentRefs:
+    - name: video-stream-gateway
+  rules:
+    # Upload API
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /videos
+      backendRefs:
+        - name: upload-service
+          port: 80
+      timeouts:
+        request: 600s  # 最大2GBのアップロードに対応（Envoy はリクエストボディをストリーミングするためサイズ上限の設定は不要）
+    # Streaming API
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /stream
+      backendRefs:
+        - name: streaming-service
+          port: 80
+    # Web フロントエンド（上記以外のパスはすべてここへ。PathPrefix は最長一致で評価される）
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: web
+          port: 80
