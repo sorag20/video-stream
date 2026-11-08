@@ -568,7 +568,3 @@ Transcoder も複数レプリカに対応しています。Redis のキューか
 - Web は `nginx-unprivileged` イメージで非 root 実行
 - Streaming Service でパストラバーサル攻撃を防止 (`..` を含むパスを拒否)
 - HLS セグメントには `Cache-Control: immutable` を設定し CDN キャッシュに対応
-
-basic認証
-
-ポインタ、&変数・関数の意味　
