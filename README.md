@@ -309,9 +309,9 @@ EKS →「クラスターを作成」で、次のように設定します（作�
 
 | 設定 | 値 |
 |---|---|
-| 名前 | `ng-arm` |
+| 名前 | `ng-t4g` |
 | ノード IAM ロール | `video-stream-node-role` |
-| AMI タイプ / インスタンスタイプ | Amazon Linux 2023 (ARM) / t4g.large（オンデマンド） |
+| AMI タイプ / インスタンスタイプ | Amazon Linux 2023 (ARM) / **t4g.large のみ**（オンデマンド。最初から入っている m6g.large などは消す。複数あると先頭のものが起動する） |
 | ディスクサイズ | 30 GiB |
 | 希望 / 最小 / 最大サイズ | 1 / 0 / 1 |
 | サブネット | デフォルト VPC の ap-northeast-1a のみ（EBS は AZ をまたげないため） |
@@ -444,7 +444,7 @@ mine="{SHA}$(printf "%s" "$PW" | openssl dgst -sha1 -binary | openssl base64)"
 ```bash
 # 使わないときはノードを 0 台にしてノード代を止める（コントロールプレーンと NLB の料金は残る）
 # コンソールの「コンピューティング」→ ノードグループ →「編集」で希望サイズを変えても同じ
-aws eks update-nodegroup-config --cluster-name video-stream --nodegroup-name ng-arm --region ap-northeast-1 \
+aws eks update-nodegroup-config --cluster-name video-stream --nodegroup-name ng-t4g --region ap-northeast-1 \
   --scaling-config minSize=0,maxSize=1,desiredSize=0
 # 再開するときは desiredSize=1
 
