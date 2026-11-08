@@ -3,7 +3,7 @@
 #   - GitHub の OIDC プロバイダと、そのリポジトリの main ブランチのワークフローだけが引き受けられる IAM ロール（アクセスキーは発行しない）
 #   - ECR リポジトリ
 #   - IAM ロールがクラスタを操作するための EKS アクセスエントリ
-# 使い方: bash deploy/eks/setup-github-actions.sh <owner>/<repo>
+# 使い方: bash deploy/eks/setup-github-actions.sh <owner>/<repo>（AWS CLI と gh にログインしてから実行する）
 # 何度実行してもよい。クラスタを作り直したら再実行する（アクセスエントリはクラスタごとに作られるため）
 set -euo pipefail
 
@@ -18,12 +18,17 @@ OIDC_HOST="token.actions.githubusercontent.com"
 OIDC_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/${OIDC_HOST}"
 ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
 
+# GitHub がトークンの sub に入れる接頭辞。イミュータブル subject が有効なリポジトリでは
+# "repo:<owner>@<owner_id>/<repo>@<repo_id>" になり、名前だけの "repo:<owner>/<repo>" では一致しない
+SUB_PREFIX="$(gh api "repos/${REPO}/actions/oidc/customization/sub" --jq '.sub_claim_prefix // empty')"
+SUB_PREFIX="${SUB_PREFIX:-repo:${REPO}}"
+
 echo "==> OIDC provider (${OIDC_HOST})"
 if ! aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$OIDC_ARN" >/dev/null 2>&1; then
   aws iam create-open-id-connect-provider --url "https://${OIDC_HOST}" --client-id-list sts.amazonaws.com >/dev/null
 fi
 
-echo "==> IAM role ${ROLE_NAME} (repo:${REPO}, branch: main)"
+echo "==> IAM role ${ROLE_NAME} (${SUB_PREFIX}, branch: main)"
 TRUST_POLICY=$(cat <<EOF
 {
   "Version": "2012-10-17",
@@ -35,7 +40,7 @@ TRUST_POLICY=$(cat <<EOF
       "Condition": {
         "StringEquals": {
           "${OIDC_HOST}:aud": "sts.amazonaws.com",
-          "${OIDC_HOST}:sub": "repo:${REPO}:ref:refs/heads/main"
+          "${OIDC_HOST}:sub": "${SUB_PREFIX}:ref:refs/heads/main"
         }
       }
     }

@@ -68,3 +68,19 @@ patches:
       - op: replace
         path: /spec/rules/0/timeouts/request
         value: 1800s
+  # ノードが 1 台なのでレプリカを増やしても可用性は上がらず、CPU の予約が増えるだけ。個人利用のため 1 にする
+  - target:
+      kind: Deployment
+      name: (upload-service|streaming-service|web)
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  # 更新時は新旧の Pod が一時的に並ぶため、その分の CPU の予約を減らす（上限の 2 CPU は変えないので、変換時はこれまでどおり使える）
+  - target:
+      kind: Deployment
+      name: transcoder-service
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 250m
