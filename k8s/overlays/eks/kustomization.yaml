@@ -7,6 +7,7 @@ resources:
   - storageclass.yaml
   - envoyproxy.yaml
   - securitypolicy.yaml
+  - serviceaccount.yaml
 
 # ECR のイメージを使う。ACCOUNT_ID と newTag は deploy/eks/deploy.sh がデプロイ時に置き換える（このファイルには実際の値を書かない）
 images:
@@ -35,6 +36,17 @@ secretGenerator:
     namespace: video-stream
     files:
       - .htpasswd
+
+configMapGenerator:
+  # 動画の保存先を MinIO から S3 に切り替える。バケット名の ACCOUNT_ID は deploy/eks/deploy.sh がデプロイ時に置き換える
+  - name: app-config
+    namespace: video-stream
+    behavior: merge
+    literals:
+      - STORAGE_BACKEND=s3
+      - AWS_REGION=ap-northeast-1
+      - S3_BUCKET_ORIGINALS=video-stream-originals-ACCOUNT_ID
+      - S3_BUCKET_HLS=video-stream-hls-ACCOUNT_ID
 
 generatorOptions:
   disableNameSuffixHash: true  # SecurityPolicy から固定の名前で参照するため
@@ -102,3 +114,33 @@ patches:
         value:
           name: PGDATA
           value: /var/lib/postgresql/data/pgdata
+  # S3 にアクセスするアプリは、Pod Identity で IAM ロールを関連付けたサービスアカウント (serviceaccount.yaml) で動かす
+  - target:
+      kind: Deployment
+      name: (upload-service|streaming-service|transcoder-service)
+    patch: |-
+      - op: add
+        path: /spec/template/spec/serviceAccountName
+        value: video-stream-app
+  # EKS では MinIO を使わない（kubectl apply は削除まではしないため、クラスタにすでにあるものは手動で消す）
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: minio
+        namespace: video-stream
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: minio
+        namespace: video-stream
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: minio-pvc
+        namespace: video-stream
