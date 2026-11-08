@@ -2,6 +2,7 @@
 # k8s/overlays/eks を EKS にデプロイするスクリプト。通常は GitHub Actions (.github/workflows/deploy.yml) が実行する
 # アカウント固有の値とシークレットは Git に含めず、一時ディレクトリにコピーしたマニフェストにデプロイ時だけ書き込む
 #   - イメージ: ECR のレジストリ（アカウント ID から組み立てる）とタグ (TAG)
+#   - S3 のバケット名: video-stream-{originals,hls}-<アカウント ID>
 #   - envoyproxy.yaml の SUBNET_ID / ACM_CERT_ARN: Parameter Store
 #   - secret.env / .htpasswd: Parameter Store (SecureString)
 # 手元から実行する場合は、ECR にあるイメージのタグ（コミットの SHA）を指定する: TAG=<SHA> bash deploy/eks/deploy.sh
@@ -41,6 +42,7 @@ fi
 sed -i.bak \
   -e "s#newName: [^/]*/video-stream/#newName: ${REGISTRY}/video-stream/#" \
   -e "s#newTag: .*#newTag: \"${TAG}\"#" \
+  -e "s#ACCOUNT_ID#${ACCOUNT_ID}#g" \
   "${OVERLAY}/kustomization.yaml"
 sed -i.bak \
   -e "s|SUBNET_ID|${SUBNET_ID}|" \
