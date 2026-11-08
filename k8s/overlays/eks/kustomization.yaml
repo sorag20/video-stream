@@ -76,11 +76,29 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 1
-  # 更新時は新旧の Pod が一時的に並ぶため、その分の CPU の予約を減らす（上限の 2 CPU は変えないので、変換時はこれまでどおり使える）
+  # ノード 1 台では新旧の Pod を並べる CPU の余裕がないため、古い Pod を止めてから新しい Pod を起動する（ワーカーなので一時的に止まっても問題ない）
+  # CPU の予約も減らしておく（上限の 2 CPU は変えないので、変換時はこれまでどおり使える）
   - target:
       kind: Deployment
       name: transcoder-service
     patch: |-
+      - op: add
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu
         value: 250m
+  # EBS ボリュームの直下には lost+found があり、そこをそのままデータディレクトリにすると initdb が失敗するため、サブディレクトリを使う
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
