@@ -43,10 +43,11 @@ React 製の Web UI から、アップロード・変換状況の確認・ブラ
 | 動画変換 | FFmpeg (H.264 / AAC / HLS) |
 | フロントエンド | React 19 + TypeScript / Vite |
 | HLS 再生 | hls.js (Safari はネイティブ再生) |
-| コンテナオーケストレーション | Kubernetes (Docker Desktop) |
+| コンテナオーケストレーション | Kubernetes (Docker Desktop / Amazon EKS) |
 | 外部公開 (L7 ルーティング) | Gateway API (Envoy Gateway) |
 | マニフェスト管理 | Kustomize |
-| クラウド | AWS (EKS / ECR / NLB / ACM) |
+| クラウド | AWS (EKS / ECR / NLB / ACM / Route 53 / Parameter Store) |
+| CI/CD | GitHub Actions (OIDC で AWS に認証) |
 
 ---
 
@@ -72,7 +73,7 @@ video_stream/
 │       └── eks/         # EKS 用の差分（ECR イメージ・NLB・Basic 認証）
 ├── deploy/
 │   ├── build-images.sh  # ローカルイメージビルドスクリプト
-│   └── eks/             # EKS クラスタ定義・デプロイスクリプト・GitHub Actions 用の AWS 準備スクリプト
+│   └── eks/             # EKS へのデプロイスクリプト・GitHub Actions 用の AWS 準備スクリプト
 ├── .github/workflows/   # リリース PR の作成・EKS へのデプロイ (GitHub Actions)
 └── docker-compose.yml   # ローカル開発用
 ```
@@ -217,16 +218,17 @@ kubectl delete -k k8s/base/
 
 | リソース | 内容 |
 |---|---|
-| クラスタ | eksctl で作成（[deploy/eks/cluster.yaml](deploy/eks/cluster.yaml)）。NAT Gateway なし、ノードはパブリックサブネット |
-| ノード | t4g.large × 1（Graviton / arm64）。PV のため ap-northeast-1a に固定 |
+| クラスタ | マネジメントコンソールで作成（カスタム設定・Auto Mode なし）。デフォルト VPC を使い、NAT Gateway は作らない |
+| ノード | マネージドノードグループ t4g.large × 1（Graviton / arm64、Amazon Linux 2023）。PV のため ap-northeast-1a に固定 |
 | イメージ | ECR |
 | 永続化 | EBS gp3（`reclaimPolicy: Retain`） |
 | 外部公開 | AWS Load Balancer Controller が Envoy の Service を NLB として作成 |
+| AWS の権限 | EBS CSI Driver と Load Balancer Controller には EKS Pod Identity で IAM ロールを割り当てる |
 | 認証 | Envoy Gateway の `SecurityPolicy`（Basic 認証） |
 | デプロイ | GitHub Actions（develop → main のリリース PR をマージするとビルド・ECR への push・apply。AWS へは OIDC で認証） |
 | 設定値・シークレット | Parameter Store（Git には含めず、デプロイ時に差し込む） |
 
-EKS 用の差分は [k8s/overlays/eks/](k8s/overlays/eks/) に置き、`k8s/base` はローカル用のまま残しています。
+EKS 用の差分は [k8s/overlays/eks/](k8s/overlays/eks/) に置き、`k8s/base` はローカル用のまま残しています。ノード 1 台向けに、レプリカ数・CPU の予約・更新方法・PostgreSQL のデータディレクトリを調整しています。
 
 ### 月額費用の目安（東京リージョン）
 
@@ -244,27 +246,85 @@ EKS 用の差分は [k8s/overlays/eks/](k8s/overlays/eks/) に置き、`k8s/base
 ### 前提条件
 
 ```bash
-brew install awscli eksctl kubectl helm gh
+brew install awscli kubectl helm gh
+aws login                                    # クラスタを作るコンソールと同じユーザーでログインする
+gh auth login
+gh auth refresh -h github.com -s workflow    # .github/workflows/ を push するのに必要
 ```
 
-- AWS CLI の認証が済んでいること。AWS Budgets で予算アラートも設定しておく
+- AWS Budgets で予算アラートを設定しておく
 - ドメインを持っていて、Route 53 にホストゾーンがあること
 
 ### デプロイ手順
 
+AWS のリソースはマネジメントコンソールで作り、クラスタの中身（Envoy Gateway など）と GitHub まわりはコマンドで設定します。
+
+#### 1. IAM ロールを作る（コンソール）
+
+先に、Load Balancer Controller 用のポリシーを作ります。IAM →「ポリシーを作成」→ JSON に [iam_policy.json](https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json) の中身を貼り付け、`AWSLoadBalancerControllerIAMPolicy` という名前で作成します。
+
+続いて、IAM →「ロールを作成」→ AWS のサービスで、次の 4 つのロールを作ります。
+
+| ロール名 | ユースケース | ポリシー |
+|---|---|---|
+| `video-stream-cluster-role` | EKS - Cluster | `AmazonEKSClusterPolicy` |
+| `video-stream-node-role` | EC2 | `AmazonEKSWorkerNodePolicy`、`AmazonEKS_CNI_Policy`、`AmazonEC2ContainerRegistryReadOnly` |
+| `video-stream-ebs-csi-role` | EKS - Pod Identity | `AmazonEBSCSIDriverPolicy` |
+| `video-stream-lbc-role` | EKS - Pod Identity | `AWSLoadBalancerControllerIAMPolicy` |
+
+EBS CSI Driver と Load Balancer Controller の権限は、ノード用ロールではなく Pod Identity で渡します。Amazon Linux 2023 のノードはメタデータの hop limit が 1 のため、Pod からノード用ロールの認証情報を取得できないからです。
+
+#### 2. 証明書を発行する（コンソール）
+
+ACM（**東京リージョン**）で `video.example.com` のパブリック証明書を DNS 検証でリクエストし、**「Route 53 でレコードを作成」**で検証用レコードを追加します。状態が「発行済み」になるまで待ちます（数分〜30 分）。
+
+#### 3. クラスタを作る（コンソール）
+
+EKS →「クラスターを作成」で、次のように設定します（作成に 10〜15 分。ここから課金が始まる）。
+
+| 設定 | 値 |
+|---|---|
+| 設定オプション | **カスタム設定**（EKS Auto Mode はオフ） |
+| 名前 | `video-stream` |
+| クラスター IAM ロール | `video-stream-cluster-role` |
+| アップグレードポリシー | **標準**（延長サポートのコントロールプレーン $0.60/時間 を避ける） |
+| 認証モード | EKS API（GitHub Actions 用のアクセスエントリを使うため） |
+| VPC / サブネット | デフォルト VPC / ap-northeast-1a・1c・1d |
+| エンドポイントアクセス | パブリックおよびプライベート |
+| オブザーバビリティ | すべてオフ |
+| アドオン | kube-proxy、CoreDNS、Amazon VPC CNI、EKS Pod Identity Agent、Amazon EBS CSI Driver のみ。Metrics Server や External DNS などは外す（ノード 1 台では CPU が足りなくなる） |
+
+#### 4. Pod Identity を関連付ける（コンソール）
+
+クラスタの「アクセス」タブ →「Pod Identity の関連付け」で、次の 2 つを作成します。
+
+| IAM ロール | 名前空間 | サービスアカウント |
+|---|---|---|
+| `video-stream-ebs-csi-role` | `kube-system` | `ebs-csi-controller-sa` |
+| `video-stream-lbc-role` | `kube-system` | `aws-load-balancer-controller` |
+
+#### 5. ノードグループを作る（コンソール）
+
+クラスタの「コンピューティング」タブ →「ノードグループを追加」で、次のように設定します。
+
+| 設定 | 値 |
+|---|---|
+| 名前 | `ng-arm` |
+| ノード IAM ロール | `video-stream-node-role` |
+| AMI タイプ / インスタンスタイプ | Amazon Linux 2023 (ARM) / t4g.large（オンデマンド） |
+| ディスクサイズ | 30 GiB |
+| 希望 / 最小 / 最大サイズ | 1 / 0 / 1 |
+| サブネット | デフォルト VPC の ap-northeast-1a のみ（EBS は AZ をまたげないため） |
+
+#### 6. Envoy Gateway と AWS Load Balancer Controller を入れる（ターミナル）
+
 ```bash
-# 1. クラスタを作成（15〜20 分）
-eksctl create cluster -f deploy/eks/cluster.yaml
+aws eks update-kubeconfig --name video-stream --region ap-northeast-1
+kubectl get nodes   # 1 台が Ready になっていること
 
-# サポート終了時に延長サポート（コントロールプレーンが $0.60/時間）に入らず、自動でアップグレードさせる
-aws eks update-cluster-config --name video-stream --region ap-northeast-1 \
-  --upgrade-policy supportType=STANDARD
-
-# 2. Envoy Gateway をインストール
 kubectl apply --server-side -f https://github.com/envoyproxy/gateway/releases/download/v1.9.3/install.yaml
 kubectl wait -n envoy-gateway-system --for=condition=Available deployment/envoy-gateway --timeout=5m
 
-# 3. AWS Load Balancer Controller をインストール
 VPC_ID=$(aws eks describe-cluster --name video-stream --region ap-northeast-1 \
   --query cluster.resourcesVpcConfig.vpcId --output text)
 helm repo add eks https://aws.github.io/eks-charts && helm repo update
@@ -272,40 +332,39 @@ helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n ku
   --set clusterName=video-stream --set region=ap-northeast-1 --set vpcId=$VPC_ID
 ```
 
-4\. デプロイ時に使う値を Parameter Store に登録します。アカウント固有の値とシークレットは Git に含めず、デプロイ時に [deploy/eks/deploy.sh](deploy/eks/deploy.sh) がここから読んでマニフェストに差し込みます。
+#### 7. Parameter Store に値を登録する（コンソール）
 
-| パラメータ | 種類 | 内容 |
+アカウント固有の値とシークレットは Git に含めず、デプロイ時に [deploy/eks/deploy.sh](deploy/eks/deploy.sh) がここから読んでマニフェストに差し込みます。Systems Manager →「パラメータストア」→「パラメータの作成」で、次の 4 つを登録します（利用枠は標準、SecureString の KMS キーはデフォルトの `alias/aws/ssm`）。
+
+| パラメータ | 種類 | 値 |
 |---|---|---|
-| `video-stream-eks-subnet-id` | String | NLB を置く ap-northeast-1a のパブリックサブネット。クラスタを作り直すと変わるため、そのたびに登録し直す |
-| `video-stream-eks-acm-cert-arn` | String | ACM（東京リージョン）で `video.example.com` などの証明書を DNS 検証で発行し、その ARN（検証用レコードはコンソールの「Route 53 でレコードを作成」で追加できる） |
-| `video-stream-eks-secret-env` | SecureString | PostgreSQL / MinIO のパスワード（[secret.env.example](k8s/overlays/eks/secret.env.example) の形式） |
-| `video-stream-eks-htpasswd` | SecureString | Basic 認証のユーザー |
+| `video-stream-eks-subnet-id` | String | デフォルト VPC の ap-northeast-1a のサブネット ID（VPC コンソールの「サブネット」で確認） |
+| `video-stream-eks-acm-cert-arn` | String | 手順 2 の証明書の ARN（`arn:aws:acm:...` で始まる） |
+| `video-stream-eks-secret-env` | SecureString | PostgreSQL / MinIO のパスワード（[secret.env.example](k8s/overlays/eks/secret.env.example) の形式の 3 行） |
+| `video-stream-eks-htpasswd` | SecureString | Basic 認証のユーザー（`me:{SHA}...` の 1 行をそのまま） |
+
+シークレットの値は手元で作ってから、コンソールに貼り付けます。
 
 ```bash
-SUBNET_ID=$(aws ec2 describe-subnets --region ap-northeast-1 \
-  --filters Name=vpc-id,Values=$VPC_ID Name=availability-zone,Values=ap-northeast-1a \
-            Name=tag:kubernetes.io/role/elb,Values=1 \
-  --query 'Subnets[0].SubnetId' --output text)
-aws ssm put-parameter --region ap-northeast-1 --overwrite --type String \
-  --name video-stream-eks-subnet-id --value "$SUBNET_ID"
-aws ssm put-parameter --region ap-northeast-1 --overwrite --type String \
-  --name video-stream-eks-acm-cert-arn --value "<証明書の ARN>"
+# video-stream-eks-secret-env の値（表示された 3 行を貼り付ける）
+printf 'POSTGRES_PASSWORD=%s\nMINIO_ACCESS_KEY=%s\nMINIO_SECRET_KEY=%s\n' \
+  "$(openssl rand -hex 24)" "$(openssl rand -hex 12)" "$(openssl rand -hex 24)"
 
-# シークレットは手元でファイルを作って登録する（ファイルは Git に含めない。登録後は削除してよい）
-cd k8s/overlays/eks
-cp secret.env.example secret.env   # 3 つの値を openssl rand -hex 24 の出力に置き換える
-htpasswd -cs .htpasswd <ユーザー名>  # Basic 認証のユーザー。Envoy は SHA 形式のみ対応のため -s を付ける
-aws ssm put-parameter --region ap-northeast-1 --overwrite --type SecureString \
-  --name video-stream-eks-secret-env --value file://secret.env
-aws ssm put-parameter --region ap-northeast-1 --overwrite --type SecureString \
-  --name video-stream-eks-htpasswd --value file://.htpasswd
-cd -
+# video-stream-eks-htpasswd の値
+openssl rand -base64 24               # ログイン用のパスワード。パスワード管理アプリに保存する
+setopt HIST_IGNORE_SPACE              # 先頭が空白のコマンドを履歴に残さない（zsh）
+ htpasswd -nbs me '<パスワード>'       # 先頭に空白を入れる。Envoy は SHA 形式のみ対応のため -s を付ける
 ```
 
-5\. GitHub Actions からデプロイできるようにします。[deploy/eks/setup-github-actions.sh](deploy/eks/setup-github-actions.sh) が AWS 側の準備（GitHub の OIDC プロバイダ・IAM ロール・ECR リポジトリ・EKS のアクセスエントリ）をします。アクセスキーは発行せず、このリポジトリの main ブランチのワークフローだけが IAM ロールを引き受けられます。
+`video-stream-eks-secret-env` は、一度デプロイした後は変えないでください。PostgreSQL は最初に初期化したときのパスワードを保持するため、後から変えると接続できなくなります。
+
+#### 8. GitHub Actions からデプロイできるようにする（ターミナル）
+
+[deploy/eks/setup-github-actions.sh](deploy/eks/setup-github-actions.sh) が AWS 側の準備（GitHub の OIDC プロバイダ・IAM ロール・ECR リポジトリ・EKS のアクセスエントリ）をします。アクセスキーは発行せず、このリポジトリの main ブランチのワークフローだけが IAM ロールを引き受けられます（イミュータブル subject が有効なリポジトリにも対応）。
 
 ```bash
-gh repo create <owner>/video-stream --private --source .   # GitHub にリポジトリを作り、origin に設定する
+gh repo create <owner>/video-stream --private --source . --remote origin
+gh auth setup-git                                              # git push で gh のログイン情報を使う
 bash deploy/eks/setup-github-actions.sh <owner>/video-stream   # クラスタを作り直したら再実行する
 # スクリプトが最後に出力する gh secret set AWS_ROLE_ARN ... を実行し、ロールの ARN をシークレットに登録する
 
@@ -315,31 +374,59 @@ gh api -X PUT repos/<owner>/video-stream/actions/permissions/workflow \
   -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
 ```
 
+#### 9. 最初のデプロイ（ターミナル）
+
 ```bash
-# 6. main に push すると .github/workflows/deploy.yml が、イメージのビルド・ECR への push・デプロイまで行う
+# main に push すると .github/workflows/deploy.yml が、イメージのビルド・ECR への push・デプロイまで行う
 git branch -M main
 git push -u origin main
-gh run watch   # ワークフローの進行状況（GitHub の Actions タブでも見られる）
-kubectl get pods -n video-stream -w
+gh run watch                                # GitHub の Actions タブでも見られる
+kubectl get pods -n video-stream            # すべて Running になること
+kubectl get svc -n envoy-gateway-system     # EXTERNAL-IP に NLB の DNS 名が出ること
 
 # 開発用の develop ブランチを作り、プルリクエストの既定のマージ先にする（以降の流れは「開発の流れ」を参照）
 git switch -c develop
 git push -u origin develop
 gh repo edit --default-branch develop
-
-# 7. NLB の DNS 名を確認（EXTERNAL-IP 欄）
-kubectl get svc -n envoy-gateway-system
 ```
 
-8\. Route 53 で `video.example.com` の A レコード（エイリアス）を NLB に向けます。
+#### 10. DNS を設定する（コンソール）
 
-https://video.example.com を開き、Basic 認証のダイアログが出れば完了です。Basic 認証のパスワードは総当たりされても破られないよう、`openssl rand -base64 24` などで作った長いものにしてください。
+Route 53 のホストゾーンで、`video` の A レコード（エイリアス）を作り、「Network Load Balancer へのエイリアス」→ 東京 →`k8s-envoygat-envoyvid-...` を選びます。
+
+https://video.example.com を開き、Basic 認証のダイアログが出れば完了です。
 
 ```bash
+curl -I https://video.example.com   # 認証なしでは 401 Unauthorized が返る
+
 # API を直接叩く場合
-curl -u <ユーザー名>:<パスワード> -X POST https://video.example.com/videos \
+curl -u me:<パスワード> -X POST https://video.example.com/videos \
   -F "title=My Video" \
   -F "file=@/path/to/video.mp4"
+```
+
+### トラブルシューティング
+
+構築時に実際に起きた問題です。
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| PVC が `Pending`、または Envoy の Service の EXTERNAL-IP が `<pending>`。EBS CSI Driver のログに `no EC2 IMDS role found` | ノード用ロールの権限を Pod から使おうとしている（hop limit が 1 のため届かない） | 手順 1・4 の Pod Identity を設定し、`kubectl rollout restart deployment ebs-csi-controller aws-load-balancer-controller -n kube-system` |
+| Pod が `Pending` で、イベントに `Insufficient cpu` | 不要なアドオン（Metrics Server は 200m）が CPU を予約している | クラスタの「アドオン」タブで削除する |
+| postgres が `initdb: ... It contains a lost+found directory` で起動しない | EBS ボリュームの直下をそのままデータディレクトリにしている | overlay で `PGDATA` をサブディレクトリにしている。設定を変えた後も古い Pod のまま失敗し続ける場合は `kubectl delete pod postgres-0 -n video-stream` |
+| NLB ができない。`kubectl describe svc -n envoy-gateway-system` に `CertificateNotFound` | 証明書が検証待ちのまま、または Parameter Store の ARN の誤り（`arn:arn:...` など） | 手順 2 の検証用レコードを作る。値を直したらデプロイのワークフローを手動実行する |
+| ワークフローが `Not authorized to perform sts:AssumeRoleWithWebIdentity` で失敗 | IAM ロールの信頼ポリシーの `sub` が、GitHub が送る値と一致していない | `setup-github-actions.sh` を再実行する（イミュータブル subject の接頭辞を GitHub の API から取得して設定する） |
+| `git push` が `without workflow scope` で拒否される | gh のトークンに `workflow` スコープがない | `gh auth refresh -h github.com -s workflow` |
+| Basic 認証でログインできない | 入力しているパスワードと、登録したハッシュが一致していない | 下のコマンドで確かめ、不一致なら手順 7 の方法で作り直す |
+
+```bash
+# 入力したパスワードが video-stream-eks-htpasswd のハッシュと一致するか確かめる（パスワードは表示されない）
+bash -c '
+read -rs -p "パスワード: " PW; echo
+stored=$(aws ssm get-parameter --region ap-northeast-1 --name video-stream-eks-htpasswd --with-decryption --query Parameter.Value --output text | sed -n "s/^me://p")
+mine="{SHA}$(printf "%s" "$PW" | openssl dgst -sha1 -binary | openssl base64)"
+[ "$stored" = "$mine" ] && echo "一致: このパスワードで正しい" || echo "不一致: 登録されたものとは別のパスワード"
+'
 ```
 
 ### 開発の流れ
@@ -350,16 +437,19 @@ curl -u <ユーザー名>:<パスワード> -X POST https://video.example.com/vi
 2. [.github/workflows/release-pr.yml](.github/workflows/release-pr.yml) が `develop` → `main` のリリース PR（ラベル `release`）を作る。リリース PR がすでにあれば、マージされたプルリクエストの一覧を更新する（[git-pr-release](https://github.com/x-motemen/git-pr-release)、本文は [.github/git-pr-release-template.erb](.github/git-pr-release-template.erb)）
 3. リリース PR を **Create a merge commit** でマージすると、[.github/workflows/deploy.yml](.github/workflows/deploy.yml) がビルドして EKS にデプロイする（squash や rebase でマージすると `develop` と `main` の履歴がずれ、次のリリース PR に同じ変更がもう一度載る）
 
+デプロイのワークフローは、`services/`・`pkg/`・`web/`・`k8s/` などデプロイ結果が変わるファイルを変更したときだけ動きます（対象は `deploy.yml` の `on.push.paths`）。
+
 ### 運用
 
 ```bash
 # 使わないときはノードを 0 台にしてノード代を止める（コントロールプレーンと NLB の料金は残る）
-eksctl scale nodegroup --cluster video-stream --name ng-arm --nodes 0
-# 再開
-eksctl scale nodegroup --cluster video-stream --name ng-arm --nodes 1
+# コンソールの「コンピューティング」→ ノードグループ →「編集」で希望サイズを変えても同じ
+aws eks update-nodegroup-config --cluster-name video-stream --nodegroup-name ng-arm --region ap-northeast-1 \
+  --scaling-config minSize=0,maxSize=1,desiredSize=0
+# 再開するときは desiredSize=1
 
-# Parameter Store の値だけを変えたときは、main でデプロイのワークフローを手動実行する
-# （IAM ロールは main からしか引き受けられないため --ref main を付ける）
+# Parameter Store の値だけを変えたとき（Basic 認証のパスワード変更など）は、main でデプロイのワークフローを手動実行する
+# （Actions タブ →「Deploy to EKS」→「Run workflow」でも同じ。IAM ロールは main からしか引き受けられない）
 gh workflow run deploy.yml --ref main
 ```
 
@@ -371,10 +461,16 @@ gh workflow run deploy.yml --ref main
 # NLB は Load Balancer Controller が消すため、クラスタより先にアプリを削除する
 # （Gateway が消えると Envoy Gateway が Envoy の Service を消し、それに合わせて NLB も削除される）
 kubectl delete namespace video-stream
-eksctl delete cluster -f deploy/eks/cluster.yaml
 ```
 
-PV の EBS ボリュームは `Retain` のため残ります。不要なら EC2 コンソールのボリューム一覧から削除し、ECR のリポジトリも削除してください。IAM ロール `video-stream-github-actions` と Parameter Store の値も残りますが、料金はかかりません。
+その後、コンソールでノードグループ → クラスタの順に削除します。次のものは残るので、不要なら削除してください。
+
+| 残るもの | 料金 |
+|---|---|
+| PV の EBS ボリューム（`Retain` のため） | かかる（EC2 コンソールのボリューム一覧から削除） |
+| ECR のリポジトリ | イメージの容量分かかる |
+| Route 53 のホストゾーン | $0.5/月 |
+| IAM ロール（5 つ）・Parameter Store の値・ACM の証明書 | かからない |
 
 ---
 
