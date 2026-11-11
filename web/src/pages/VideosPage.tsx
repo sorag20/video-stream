@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router'
-import { AlertIcon, RefreshIcon } from '../components/icons'
+import { AlertIcon } from '../components/icons'
 import { PlayerPanel } from '../components/PlayerPanel'
 import { VideoList } from '../components/VideoList'
 import type { Video } from '../types'
@@ -8,11 +8,10 @@ type Props = {
   videos: Video[]
   loading: boolean
   error: string | null
-  refresh: () => Promise<void>
   autoplay: boolean
 }
 
-export function VideosPage({ videos, loading, error, refresh, autoplay }: Props) {
+export function VideosPage({ videos, loading, error, autoplay }: Props) {
   // 選択中の動画は URL (?v=<id>) で持つ。アップロード完了後の遷移やリロードでも選択が保たれる
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedId = searchParams.get('v')
