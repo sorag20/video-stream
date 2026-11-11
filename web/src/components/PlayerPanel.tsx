@@ -2,6 +2,7 @@ import { lazy, Suspense, useState } from 'react'
 import { streamUrl } from '../api'
 import { formatDate } from '../format'
 import type { Video } from '../types'
+import { Comments } from './Comments'
 import { AlertIcon, CheckIcon, ClockIcon, CopyIcon } from './icons'
 import { StatusBadge } from './StatusBadge'
 
@@ -21,6 +22,8 @@ export function PlayerPanel({ video, autoplay }: { video: Video; autoplay: boole
         </div>
         {video.status === 'ready' && <UrlField url={new URL(streamUrl(video.id), window.location.origin).href} />}
       </div>
+      {/* コメントは再生できる動画にだけ付けられる。key で動画ごとに再マウントし、一覧と入力中の本文をリセットする */}
+      {video.status === 'ready' && <Comments key={video.id} videoId={video.id} />}
     </>
   )
 }
