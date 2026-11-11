@@ -58,7 +58,7 @@ Go + Kubernetes + HLS による動画配信プロジェクトです。
 ```
 video_stream/
 ├── services/
-│   ├── upload/          # Upload Service (POST /videos, GET /videos)
+│   ├── upload/          # Upload Service (POST /videos, GET /videos, GET/POST /videos/{id}/comments)
 │   ├── transcoder/      # Transcoder Worker (Redis → FFmpeg → MinIO)
 │   └── streaming/       # Streaming Service (GET /stream/{id}/...)
 ├── pkg/
@@ -126,6 +126,20 @@ curl http://localhost:8082/stream/<VIDEO_ID>/index.m3u8
 
 # 4. VLC や hls.js でストリーミング再生
 # URL: http://localhost:8082/stream/<VIDEO_ID>/index.m3u8
+```
+
+### コメント
+
+再生画面のプレイヤーの下にコメント欄があり、閲覧者が名前（省略時は「匿名」）と本文（最大 1000 文字）を投稿できます。コメントは PostgreSQL の `comments` テーブルに保存されます。
+
+```bash
+# コメントを投稿
+curl -X POST http://localhost:8080/videos/<VIDEO_ID>/comments \
+  -H "Content-Type: application/json" \
+  -d '{"author":"Taro","body":"Nice video!"}'
+
+# コメント一覧（新しい順）
+curl http://localhost:8080/videos/<VIDEO_ID>/comments
 ```
 
 ### フロントエンド開発 (Vite)
