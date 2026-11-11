@@ -6,7 +6,7 @@ import { AlertIcon } from './icons'
 const supportsNativeHls = document.createElement('video').canPlayType('application/vnd.apple.mpegurl') !== ''
 
 // src が変わったら親側で key を変えて再マウントすること（エラー状態をリセットするため）
-export default function VideoPlayer({ src }: { src: string }) {
+export default function VideoPlayer({ src, autoplay = false }: { src: string; autoplay?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -50,7 +50,7 @@ export default function VideoPlayer({ src }: { src: string }) {
 
   return (
     <div className="screen">
-      <video ref={videoRef} controls playsInline preload="metadata" />
+      <video ref={videoRef} controls playsInline preload="metadata" autoPlay={autoplay} />
       {error && (
         <div className="screen__error" role="alert">
           <AlertIcon size={16} />
