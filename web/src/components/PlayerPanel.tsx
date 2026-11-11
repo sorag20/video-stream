@@ -2,27 +2,16 @@ import { lazy, Suspense, useState } from 'react'
 import { streamUrl } from '../api'
 import { formatDate } from '../format'
 import type { Video } from '../types'
-import { AlertIcon, CheckIcon, ClockIcon, CopyIcon, FilmIcon } from './icons'
+import { AlertIcon, CheckIcon, ClockIcon, CopyIcon } from './icons'
 import { StatusBadge } from './StatusBadge'
 
 // hls.js はサイズが大きいため、再生可能な動画を選択したときに初めて読み込む
 const VideoPlayer = lazy(() => import('./VideoPlayer'))
 
-export function PlayerPanel({ video }: { video: Video | undefined }) {
-  if (!video) {
-    return (
-      <div className="screen screen--placeholder">
-        <div className="screen__message">
-          <FilmIcon size={32} />
-          <p>ライブラリから動画を選択すると、ここで再生されます</p>
-        </div>
-      </div>
-    )
-  }
-
+export function PlayerPanel({ video, autoplay }: { video: Video; autoplay: boolean }) {
   return (
     <>
-      <Screen video={video} />
+      <Screen video={video} autoplay={autoplay} />
       <div className="stage__meta">
         <h2 className="stage__title">{video.title}</h2>
         <div className="stage__sub">
@@ -36,12 +25,12 @@ export function PlayerPanel({ video }: { video: Video | undefined }) {
   )
 }
 
-function Screen({ video }: { video: Video }) {
+function Screen({ video, autoplay }: { video: Video; autoplay: boolean }) {
   switch (video.status) {
     case 'ready':
       return (
         <Suspense fallback={<div className="screen" />}>
-          <VideoPlayer key={video.id} src={streamUrl(video.id)} />
+          <VideoPlayer key={video.id} src={streamUrl(video.id)} autoplay={autoplay} />
         </Suspense>
       )
     case 'failed':
