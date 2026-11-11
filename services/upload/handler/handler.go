@@ -19,13 +19,14 @@ const maxUploadSize = 2 << 30 // 2GB
 
 // Handler はUpload Serviceのハンドラ
 type Handler struct {
-	repo    *db.VideoRepository
-	queue   *queue.Client
-	storage *storage.Client
+	repo     *db.VideoRepository
+	comments *db.CommentRepository
+	queue    *queue.Client
+	storage  *storage.Client
 }
 
-func New(repo *db.VideoRepository, q *queue.Client, s *storage.Client) *Handler {
-	return &Handler{repo: repo, queue: q, storage: s}
+func New(repo *db.VideoRepository, comments *db.CommentRepository, q *queue.Client, s *storage.Client) *Handler {
+	return &Handler{repo: repo, comments: comments, queue: q, storage: s}
 }
 
 // Upload は動画ファイルを受け取り、MinIOに保存してRedisにジョブを積む
@@ -131,7 +132,6 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, "video not found")
 		return
 	}
-
 
 	respondJSON(w, http.StatusOK, video)
 }

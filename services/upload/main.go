@@ -36,6 +36,11 @@ func main() {
 		slog.Error("failed to migrate", "err", err)
 		os.Exit(1)
 	}
+	commentRepo := db.NewCommentRepository(pool)
+	if err := commentRepo.Migrate(ctx); err != nil {
+		slog.Error("failed to migrate comments", "err", err)
+		os.Exit(1)
+	}
 
 	// Redis
 	queueClient, err := queue.NewClient()
@@ -52,7 +57,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	h := handler.New(repo, queueClient, storageClient)
+	h := handler.New(repo, commentRepo, queueClient, storageClient)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -67,6 +72,8 @@ func main() {
 	r.Post("/videos", h.Upload)
 	r.Get("/videos", h.List)
 	r.Get("/videos/{id}", h.Get)
+	r.Get("/videos/{id}/comments", h.ListComments)
+	r.Post("/videos/{id}/comments", h.CreateComment)
 
 	addr := ":8080"
 	srv := &http.Server{

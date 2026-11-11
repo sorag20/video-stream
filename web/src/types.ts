@@ -12,3 +12,12 @@ export interface Video {
   created_at: string
   updated_at: string
 }
+
+// pkg/models/comment.go と対応する型定義
+export interface Comment {
+  id: string
+  video_id: string
+  author: string
+  body: string
+  created_at: string
+}

@@ -73,7 +73,8 @@ p {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
   color: inherit;
 }
@@ -445,6 +446,114 @@ input {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- comments */
+
+.comments {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.comments__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.comments__count {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comment-form__author {
+  max-width: 240px;
+}
+
+.textarea {
+  min-height: 76px;
+  padding: 8px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.comment-form__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.comment-form__footer .form-error {
+  flex: 1;
+  margin-top: 0;
+}
+
+.comment-form__counter {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.comment {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.comment:last-child {
+  padding-bottom: 0;
+}
+
+.comment__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.comment__author {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.comment__date {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.comment__body {
+  font-size: 14px;
+  /* 改行をそのまま表示する */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ---------------------------------------------------------------- badge */

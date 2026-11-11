@@ -1,4 +1,4 @@
-import type { Video } from './types'
+import type { Comment, Video } from './types'
 
 // API は常に同一オリジンで呼び出す（dev: Vite proxy / docker compose: nginx / k8s: Gateway API）。
 // Upload Service は CORS ヘッダを返さないため、別オリジンからは呼び出せない。
@@ -6,12 +6,42 @@ import type { Video } from './types'
 // Upload Service の上限 (services/upload/handler: maxUploadSize) と合わせる
 export const MAX_UPLOAD_BYTES = 2 * 1024 ** 3
 
+// Upload Service の上限 (services/upload/handler: maxCommentBodyLen / maxCommentAuthorLen) と合わせる
+export const MAX_COMMENT_BODY_LENGTH = 1000
+export const MAX_COMMENT_AUTHOR_LENGTH = 30
+
 export function streamUrl(id: string): string {
   return `/stream/${encodeURIComponent(id)}/index.m3u8`
 }
 
 export async function listVideos(): Promise<Video[]> {
   const res = await fetch('/videos')
+  if (!res.ok) {
+    throw new Error(await readError(res))
+  }
+  return res.json()
+}
+
+function commentsUrl(videoId: string): string {
+  return `/videos/${encodeURIComponent(videoId)}/comments`
+}
+
+// 新しい順で返る
+export async function listComments(videoId: string, signal?: AbortSignal): Promise<Comment[]> {
+  const res = await fetch(commentsUrl(videoId), { signal })
+  if (!res.ok) {
+    throw new Error(await readError(res))
+  }
+  return res.json()
+}
+
+// author が空の場合はサーバー側で「匿名」になる
+export async function postComment(videoId: string, author: string, body: string): Promise<Comment> {
+  const res = await fetch(commentsUrl(videoId), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ author, body }),
+  })
   if (!res.ok) {
     throw new Error(await readError(res))
   }
