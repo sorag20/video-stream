@@ -67,6 +67,10 @@ func (w *Worker) Run(ctx context.Context) {
 func (w *Worker) process(ctx context.Context, job *models.TranscodeJob) {
 	// ステータスをprocessingに更新
 	if err := w.repo.UpdateStatus(ctx, job.VideoID, models.StatusProcessing, "", ""); err != nil {
+		if errors.Is(err, db.ErrVideoNotFound) {
+			slog.Info("video was deleted before transcoding, skipping", "videoID", job.VideoID)
+			return
+		}
 		slog.Error("failed to update status to processing", "err", err, "videoID", job.VideoID)
 		return
 	}
@@ -80,6 +84,14 @@ func (w *Worker) process(ctx context.Context, job *models.TranscodeJob) {
 
 	// ステータスをreadyに更新
 	if err := w.repo.UpdateStatus(ctx, job.VideoID, models.StatusReady, hlsKey, ""); err != nil {
+		if errors.Is(err, db.ErrVideoNotFound) {
+			// 変換中に動画が削除された。アップロード済みの HLS ファイルが残らないよう片付ける
+			slog.Info("video was deleted during transcoding, removing hls files", "videoID", job.VideoID)
+			if err := w.storage.RemovePrefix(ctx, storage.BucketHLS, job.VideoID+"/"); err != nil {
+				slog.Error("failed to remove hls files of deleted video", "err", err, "videoID", job.VideoID)
+			}
+			return
+		}
 		slog.Error("failed to update status to ready", "err", err, "videoID", job.VideoID)
 		return
 	}

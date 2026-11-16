@@ -92,6 +92,17 @@ export function CheckIcon(props: IconProps) {
   )
 }
 
+export function TrashIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 7h16" />
+      <path d="M9 7V4.5h6V7" />
+      <path d="M6.5 7l1 13h9l1-13" />
+      <path d="M10 11v5M14 11v5" />
+    </Svg>
+  )
+}
+
 export function XIcon(props: IconProps) {
   return (
     <Svg {...props}>

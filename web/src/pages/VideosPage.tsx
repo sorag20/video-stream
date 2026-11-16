@@ -9,9 +9,10 @@ type Props = {
   loading: boolean
   error: string | null
   autoplay: boolean
+  onDeleted: (id: string) => void
 }
 
-export function VideosPage({ videos, loading, error, autoplay }: Props) {
+export function VideosPage({ videos, loading, error, autoplay, onDeleted }: Props) {
   // 選択中の動画は URL (?v=<id>) で持つ。アップロード完了後の遷移やリロードでも選択が保たれる
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedId = searchParams.get('v')
@@ -21,6 +22,12 @@ export function VideosPage({ videos, loading, error, autoplay }: Props) {
     setSearchParams({ v: id })
     // プレイヤーは一覧の上に出るため、スクロール位置を先頭へ戻す
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function handleDeleted(id: string) {
+    onDeleted(id)
+    // 削除した動画の選択を外す（履歴には残さず、「戻る」で消えた動画の URL に戻らないようにする）
+    setSearchParams({}, { replace: true })
   }
 
   return (
@@ -33,7 +40,7 @@ export function VideosPage({ videos, loading, error, autoplay }: Props) {
 
       {selected && (
         <section className="stage" aria-label="プレイヤー">
-          <PlayerPanel video={selected} autoplay={autoplay} />
+          <PlayerPanel video={selected} autoplay={autoplay} onDeleted={handleDeleted} />
         </section>
       )}
 

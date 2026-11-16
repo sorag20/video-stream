@@ -22,6 +22,15 @@ export async function listVideos(): Promise<Video[]> {
   return res.json()
 }
 
+// 動画本体（オリジナル・HLS）とコメントもサーバー側でまとめて削除される
+export async function deleteVideo(id: string): Promise<void> {
+  const res = await fetch(`/videos/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  // 404 は別のタブなどで削除済みの場合。結果は同じなので成功として扱う
+  if (!res.ok && res.status !== 404) {
+    throw new Error(await readError(res))
+  }
+}
+
 function commentsUrl(videoId: string): string {
   return `/videos/${encodeURIComponent(videoId)}/comments`
 }
