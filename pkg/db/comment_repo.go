@@ -10,9 +10,6 @@ import (
 	"github.com/sorag/video_stream/pkg/models"
 )
 
-// ErrVideoNotFound はコメント対象の動画が存在しないことを表す
-var ErrVideoNotFound = errors.New("video not found")
-
 // PostgreSQL の外部キー制約違反 (foreign_key_violation)
 const pgForeignKeyViolation = "23503"
 

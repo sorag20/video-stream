@@ -72,6 +72,7 @@ func main() {
 	r.Post("/videos", h.Upload)
 	r.Get("/videos", h.List)
 	r.Get("/videos/{id}", h.Get)
+	r.Delete("/videos/{id}", h.Delete)
 	r.Get("/videos/{id}/comments", h.ListComments)
 	r.Post("/videos/{id}/comments", h.CreateComment)
 

@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,7 +17,10 @@ import (
 	"github.com/sorag/video_stream/pkg/storage"
 )
 
-const maxUploadSize = 2 << 30 // 2GB
+const (
+	maxUploadSize        = 2 << 30 // 2GB
+	storageDeleteTimeout = 2 * time.Minute
+)
 
 // Handler はUpload Serviceのハンドラ
 type Handler struct {
@@ -134,6 +139,37 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, video)
+}
+
+// Delete は動画を削除する（メタデータ・コメント・オリジナルファイル・HLS ファイル）
+// DELETE /videos/{id}
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	// 先に DB から消す。変換中に削除された場合も、Transcoder がレコードの消失を検知して HLS を片付けられる
+	if err := h.repo.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, db.ErrVideoNotFound) {
+			respondError(w, http.StatusNotFound, "video not found")
+			return
+		}
+		slog.Error("failed to delete video", "err", err, "videoID", id)
+		respondError(w, http.StatusInternalServerError, "failed to delete video")
+		return
+	}
+
+	// レコードは削除済みのため、ファイルの削除に失敗しても成功として返す（残ったファイルはログから追える）
+	// クライアントが切断しても最後まで消し切れるよう、リクエストのキャンセルは引き継がない
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), storageDeleteTimeout)
+	defer cancel()
+	prefix := id + "/" // 両バケットとも {videoID}/ 配下に保存している
+	for _, bucket := range []string{storage.BucketOriginals, storage.BucketHLS} {
+		if err := h.storage.RemovePrefix(ctx, bucket, prefix); err != nil {
+			slog.Error("failed to delete video files", "err", err, "videoID", id, "bucket", bucket)
+		}
+	}
+
+	slog.Info("video deleted", "videoID", id)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- helpers ---
