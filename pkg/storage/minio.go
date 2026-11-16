@@ -172,6 +172,46 @@ func (c *Client) FPutObject(ctx context.Context, bucket, key, localPath, content
 	return nil
 }
 
+// RemovePrefix は prefix で始まるキーのオブジェクトをすべて削除する（該当が無ければ何もしない）
+func (c *Client) RemovePrefix(ctx context.Context, bucket, prefix string) error {
+	bucket = c.bucketName(bucket)
+
+	// 途中で抜けたときに一覧取得の goroutine を止める
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	objectsCh := make(chan minio.ObjectInfo)
+	var listErr error
+	go func() {
+		defer close(objectsCh)
+		for obj := range c.mc.ListObjects(ctx, bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
+			if obj.Err != nil {
+				listErr = obj.Err
+				return
+			}
+			select {
+			case objectsCh <- obj:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// 複数オブジェクトをまとめて削除する（HLS はセグメント数が多いため 1 件ずつ消さない）
+	var removeErr error
+	for e := range c.mc.RemoveObjects(ctx, bucket, objectsCh, minio.RemoveObjectsOptions{}) {
+		if removeErr == nil {
+			removeErr = fmt.Errorf("remove object [%s/%s]: %w", bucket, e.ObjectName, e.Err)
+		}
+	}
+
+	// RemoveObjects の結果チャネルが閉じるのは objectsCh を読み切った後なので、ここで listErr を読んでよい
+	if listErr != nil {
+		return fmt.Errorf("list objects [%s/%s]: %w", bucket, prefix, listErr)
+	}
+	return removeErr
+}
+
 // bucketName は論理名（BucketOriginals / BucketHLS）を実際のバケット名に変換する
 func (c *Client) bucketName(name string) string {
 	if b, ok := c.buckets[name]; ok {

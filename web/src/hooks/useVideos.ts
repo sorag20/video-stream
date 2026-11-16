@@ -27,6 +27,11 @@ export function useVideos() {
     setVideos((prev) => [video, ...prev.filter((v) => v.id !== video.id)])
   }, [])
 
+  // 削除した動画を一覧から即時に取り除く
+  const removeVideo = useCallback((id: string) => {
+    setVideos((prev) => prev.filter((v) => v.id !== id))
+  }, [])
+
   useEffect(() => {
     void refresh()
   }, [refresh])
@@ -39,5 +44,5 @@ export function useVideos() {
     return () => clearInterval(timer)
   }, [hasInFlight, refresh])
 
-  return { videos, loading, error, refresh, addVideo }
+  return { videos, loading, error, refresh, addVideo, removeVideo }
 }

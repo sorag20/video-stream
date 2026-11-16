@@ -8,7 +8,7 @@ import { VideosPage } from './pages/VideosPage'
 
 export default function App() {
   // 動画一覧はページをまたいで保持する（ページを移動しても変換状況のポーリングが続き、戻ったときに即表示できる）
-  const { videos, loading, error, addVideo } = useVideos()
+  const { videos, loading, error, addVideo, removeVideo } = useVideos()
   const { settings, updateSettings } = useSettings()
 
   return (
@@ -18,7 +18,13 @@ export default function App() {
         <Route
           index
           element={
-            <VideosPage videos={videos} loading={loading} error={error} autoplay={settings.autoplay} />
+            <VideosPage
+              videos={videos}
+              loading={loading}
+              error={error}
+              autoplay={settings.autoplay}
+              onDeleted={removeVideo}
+            />
           }
         />
         <Route path="upload" element={<UploadPage onUploaded={addVideo} />} />

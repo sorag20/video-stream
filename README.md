@@ -58,7 +58,7 @@ Go + Kubernetes + HLS による動画配信プロジェクトです。
 ```
 video_stream/
 ├── services/
-│   ├── upload/          # Upload Service (POST /videos, GET /videos, GET/POST /videos/{id}/comments)
+│   ├── upload/          # Upload Service (POST /videos, GET /videos, DELETE /videos/{id}, GET/POST /videos/{id}/comments)
 │   ├── transcoder/      # Transcoder Worker (Redis → FFmpeg → MinIO)
 │   └── streaming/       # Streaming Service (GET /stream/{id}/...)
 ├── pkg/
@@ -127,6 +127,17 @@ curl http://localhost:8082/stream/<VIDEO_ID>/index.m3u8
 # 4. VLC や hls.js でストリーミング再生
 # URL: http://localhost:8082/stream/<VIDEO_ID>/index.m3u8
 ```
+
+### 動画の削除
+
+再生画面の「削除」ボタンから動画を削除できます。メタデータ・コメント（PostgreSQL）と、オリジナルファイル・HLS ファイル（オブジェクトストレージ）がまとめて削除され、元に戻せません。変換待ち・変換中の動画も削除できます。
+
+```bash
+curl -X DELETE http://localhost:8080/videos/<VIDEO_ID>
+# → 204 No Content
+```
+
+EKS（Amazon S3）では、Upload Service と Transcoder の IAM ロールに、両バケットへの `s3:ListBucket` と `s3:DeleteObject` の権限が必要です。
 
 ### コメント
 
